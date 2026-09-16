@@ -1,0 +1,2 @@
+# harness 直接读取这些组合文件，git 不做任何换行符转换，保证 checkout 与磁盘字节一致
+* -text

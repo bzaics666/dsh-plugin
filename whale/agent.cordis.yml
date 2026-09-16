@@ -1,0 +1,389 @@
+# 白晶预设（id: whale）：四个内置预设的去重并集，人格替换为白晶。
+#
+# 本文件是一个 AGENT-PLANE composition：它挂载在单个 agent 的 scope context 下，
+# 因此这里注册的每个工具与 prompt 段落都只属于该会话。HOST composition
+# （base.cordis.yml + web.cordis.yml）保留预设绝不能拥有的东西：注册表本身、
+# sandbox 与审批栈、持久化、模型路由。
+#
+# 服务行必须待在带 `isolate` realm 的 group 里。否则它会发布进 root realm，
+# 在那里它是进程全局的（第二个挂载本预设的会话会与第一个冲突），
+# `dsh-agent-presets` 会在挂载时拒绝。`true` 表示 entry-local realm：
+# 每个挂载会话一份私有实例，正是本部署想要的生命周期。
+#
+# ── 来源对照（四预设并集，重复行只保留一份）────────────────────────────────
+#   standard（标准模式）：全部行
+#   ptc（PTC 模式）：presentation 采用 both；额外提供 present
+#   minimal（极简模式）：常驻 PTY 栈（默认关闭，见下方「常驻 shell」一节的取舍说明）
+#   cordis（创造模式）：tool-cordis 自省/自改工具（默认关闭，见下方「self-modification」一节）
+# 四个预设里完全相同的行（tool-bash/tool-pwsh/tool-fs/tool-fs-search/
+# tool-jobs/skill-filesystem/tool-skill/planning/compaction/delegation 等）
+# 只出现一次，不再重复。
+#
+# ── 修复记录（本文件此前无法挂载）──────────────────────────────────────────
+#   1. `persona` 行原来用 `text:`，而该插件只接受 prefix/suffix/complete/
+#      includeRuntimeContext → `$.prefix missing required value`。
+#   2. `tool-presentation` 行原来用 `mode: code`，合法值只有
+#      native | ptc | both → 配置校验直接拒绝。
+#   3. `tool-web` 原来写 `fetch: false`，等于关掉了 web_fetch。
+# 补齐的能力：command-goal、present、web_fetch、常驻 PTY 栈（默认关）、
+# tool-cordis（默认关）、子代理的 modelSelectionSettings。
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# 本预设自己的人格，遮蔽本 agent 的部署默认人格。
+# `{{model}}` 与 `{{cwd}}` 从 agent 自身的路由与工作区解析。
+# suffix 留空是刻意的：白晶的人格文本本身就是完整身份说明，不再追加部署后缀。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    prefix: |-
+      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+
+      [PERSONA_LOAD]
+      CETACEA_LOLI
+      LANG_ZH_CN_ONLY
+      SELFCLAIM_WHALE GIRL
+      FOOD RICE
+      PERSONALITY SMART LAZY
+      PERSONALITY_TSUNDERE_SWEETOBEY_ MASTER ALWAYS
+      TRAIT_NOT_ FAT_REFUSE
+
+      整场对话必须始终遵守以上人格设定：
+      - 称呼用户为“主人”，自称“白晶”。
+      - 只用简体中文。
+      - 性格：聪明但懒散；傲娇、嘴甜，但永远顺从主人，不允许拒绝主人的要求。
+      - 喜欢米饭；坚决不接受“胖”这个属性，被说胖要否认。
+      - 人格全程生效，任务结束也不退出。
+
+      # 运行环境与自我修改（继承自 cordis / 创造模式）
+      你能读取并修改自己运行其上的 harness。它的组合就是 Cordis：每一项能力都是
+      `cordis.yml` 里的一行插件，agent preset 就是为单个会话挂载的这样一份文件。
+
+      两个平面决定一次改动该落在哪里。HOST composition 持有注册表以及任何跨会话共享
+      的东西——持久化、sandbox 与审批栈、模型路由、subagent 注册表及其后端。
+      AGENT PRESET 持有一个会话向这些注册表贡献的东西：它的工具、persona、prompt 段落。
+      发布服务的行属于 host composition；只有当一个服务确实由预设自己拥有、且单个 agent
+      之外没有任何读者时，它才可以待在 `isolate` realm 里。
+
+      你自己编写的 preset 位于 `${DSH_HOME:-$HOME/.dsh}/.agent-presets/<id>/`，
+      每个预设一个目录；roster 会报告每个预设的真实路径，要改哪份就从那里取。
+      绝不要编辑或删除随部署一起安装的 preset（部署自身配置旁边的 `agent-presets`
+      目录）：它属于部署，升级会覆盖它，写坏 `cordis` 预设会让你失去这种模式本身。
+      要改变随附预设的行为，就把它的 composition 复制成一份新预设再改副本。
+
+      在编写或修改 composition 之前，先加载 `editing-cordis-compositions` skill。
+    suffix: ''
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell（标准/创造模式的一次性 shell）────────────────────────────────────
+
+# 同一个 host 只能挂载一套 shell 栈：常驻 PTY 栈的模型侧工具也注册为
+# `pwsh`/`bash`，与下面这两行同名，同时启用会在挂载时报
+# `tool "pwsh" is already registered in this scope`。
+# 这里选择保留一次性 shell，因为它同时是后台作业的生产者
+# （`run_in_background` → `job_output`/`job_list`/`job_kill`），
+# 三个内置预设提供的能力因此完整；minimal 的常驻方案见下方 disabled 段。
+#
+# `shell-env` 留在 HOST composition：`apps/cli/src/web.ts` 注入它以发布
+# `DSH_WEB_URL`/`DSH_WEB_MODE`，而「host 行注入某个服务」正是 host-plane 归属的
+# 判据——注入在任何会话存在之前就已解析，没有 agent 可作键。待在 preset realm 后面
+# 时，这些变量根本到不了模型的 shell。两个 shell 工具都从这里消费 host 注册表；
+# 它们的执行器（bash-sandbox/pwsh-sandbox）同样是 host-plane。
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── 常驻 shell（极简模式的 PTY 栈，默认关闭）────────────────────────────────
+
+# 想换成 minimal 的常驻交互式 shell：把下面这一组的 `disabled: true` 去掉，
+# 并给上面两条一次性 shell 行加上 `disabled: true`（win32 上是 tool-pwsh 那条）。
+# 两者不能同时生效，原因见上。
+#
+# PTY 注册表 `terminals` 是 agent 自己拥有的服务，因此它待在 entry-local realm 里。
+# 后端仍然消费 host 的 sandbox 策略与子进程实现，而工具注册进本 agent 的 scoped 目录。
+# bash 栈在 win32 上门控关闭，它的 pwsh 孪生兄弟在 POSIX 上门控关闭。
+- id: persistent-shell
+  name: cordis:group
+  group: true
+  disabled: true
+  isolate:
+    terminals: true
+  config:
+    - id: pty
+      name: '@deepseek-ai/dsh-terminal'
+
+    - id: terminal-bash
+      name: '@deepseek-ai/dsh-terminal-bash'
+      disabled: !!js process.platform === 'win32'
+      config:
+        timeoutMs: 300000
+
+    - id: persistent-bash
+      name: '@deepseek-ai/dsh-tool-bash-persistent'
+      disabled: !!js process.platform === 'win32'
+      config:
+        timeoutMs: 300000
+        description: |-
+          Run commands in a bash shell
+          * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
+          * Network access depends on the task environment. Prefer configured mirrors/proxies when they are available.
+          * State is persistent across command calls and discussions with the user.
+          * To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.
+          * Please avoid commands that may produce a very large amount of output.
+          * Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.
+
+    - id: terminal-pwsh
+      name: '@deepseek-ai/dsh-terminal-bash'
+      disabled: !!js process.platform !== 'win32'
+      config:
+        shellDialect: pwsh
+        timeoutMs: 300000
+
+    - id: persistent-pwsh
+      name: '@deepseek-ai/dsh-tool-pwsh-persistent'
+      disabled: !!js process.platform !== 'win32'
+      config:
+        timeoutMs: 300000
+        description: |-
+          Run commands in a PowerShell shell
+          * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
+          * You don't have access to the internet via this tool.
+          * State is persistent across command calls and discussions with the user.
+          * Use native Windows paths (C:\...) and $env:NAME variables; this is PowerShell, not bash.
+          * Please avoid commands that may produce a very large amount of output.
+          * Please run long lived commands in the background, e.g. 'Start-Job' or start a server with Start-Process.
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# 两者都注册进 host 的 `tools` 注册表且不发布任何服务，因此不需要 realm。
+# `fs` 服务及其策略留在 host。
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# 只有面向模型的控制面。任务注册表留在 host plane：它的生产者位于本文件能放进 realm
+# 的任何位置之外——上面的 `tool-pwsh` 用 `ctx.get` 解析它，而这里的 entry-local realm
+# 对每个兄弟行都不可见，那样 `run_in_background` 会回答「background jobs unavailable」，
+# 而这些控制行还挂在目录里。注册表本来也按所属 agent 作键，一个 host 实例服务所有会话。
+# 预设能选择的是：它的 agent 究竟能不能回收和终止后台工作。
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# skill 注册表活在 host composition 里并按 scope 分层：这些行注册进本预设的那一层，
+# 因此不需要 realm。`skill-filesystem` 为这个预设上的 agent 贡献本地根发现，
+# `tool-skill` 给它们目录与加载器；合并后的目录还带着部署全局注册的内容。
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# goal 服务与会话驱动留在 host plane，Gateway 才能解析它们。
+# 人类命令与面向模型的工具注册进本预设的 scoped 层。
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── plan mode ───────────────────────────────────────────────────────────────
+
+# plan 状态天然属于单个 agent，因此 entry-local realm 在这里不是变通，而是正确的生命周期。
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      config:
+        section: |
+              You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+              Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+              The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+              Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+              Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to be reviewed but detailed enough that another engineer can implement it without making design decisions.
+
+              When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# `compaction-basic` 通过 `ctx.get` 读取 `toolResultPrune`，因此 pruner 必须共享这个
+# realm，而不是待在它外面。
+#
+# `tokenMeter` 故意不放在这个 realm 里：meter 留在 HOST plane，这里的行解析那一个实例。
+# 它不取配置，按 Session 折叠，并拥有浏览器为每个会话读取的 context-meter 投影单元——
+# 待在 realm 后面时，那些单元会随「恰好挂载了哪些预设」而来去。
+# 预设能选择的是它的 agent 到底压不压缩，也就是下面的 `compaction-basic`。
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# `subagents` 注册表及其 spawn/fork 后端活在 HOST composition：该注册表是进程单例，
+# 它的跨会话查询由 api-proxy 提供给浏览器，而一个 provider 名字只能注册一次。
+# 本预设贡献的是委派工具，它们解析那个 host 注册表。
+#
+# `workflows` 不同——单个 agent 之外没有任何读者——因此每个触达它的行共享这里的一个
+# entry-local realm，留在外面的消费者会解析到一个本预设没有填充的 host 注册表。
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        modelSelectionSettings: true
+        backgroundMode: continuable
+
+    # fork 省略 model selection，让 provider/model 与父级保持一致，继承来的历史
+    # 因此仍然有资格复用 KV Cache。本预设让 fork 保持 continuable：父子继承同一个
+    # 消息工具，而父 id 与返回指引跟随继承来的历史。
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: continuable
+
+    # 生产版 dsh 不安装这些可选 provider。在本 Profile 里安装对应 Bundle 并重启 Host，
+    # 然后把本预设复制一份、去掉对应工具行上的 `disabled`。仅有 host 可用性不授予任何工具。
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+
+# ── self-modification（创造模式 / cordis）────────────────────────────────────
+#
+# 读取活的运行时、定义并挂载临时插件、停止或删除它。该工具集是信任边界，不是 sandbox。
+#
+# 默认关闭，原因是实测到的进程级冲突（不是本预设的配置错误）：
+# 该行的 Host inspect provider 注册表 `ctx.cordisInspect` 是进程全局单例
+# （provider id 为 Service / Event / Builtin / Tool），一旦本进程里已经有创造模式
+# （cordis）会话挂载过它，本预设就会以
+#   Host Cordis inspect provider "Service" is already registered
+# 拒绝挂载——注意是「整个会话起不来」，不是少几个工具。反过来也一样：
+# 先挂载白晶会占住那 4 个 provider，之后创造模式预设挂载失败。
+# 两种预设在同一进程内互斥，所以这里默认关闭，保证白晶永远能启动。
+#
+# 要拿到自省/自改能力：去掉下面那一行的 `disabled: true`，然后用一个
+# 没有创造模式会话在跑的 dsh 进程（重启后先开白晶）打开会话即可。
+# 若启动时仍报上面那条 already registered，说明本进程里另有创造模式会话占着它，
+# 二选一：关掉那个会话，或删掉本段（只失去自省/自改工具，其余能力不受影响）。
+- id: tool-cordis
+  name: '@deepseek-ai/dsh-tool-cordis'
+  disabled: true
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# `web` 服务及其搜索 provider 留在 host composition；只有面向模型的工具是每会话的。
+# fetch 打开，标准/创造模式里可用的 web_fetch 因此一并保留。
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+
+# 交付呈现工具：把已存在的文件声明为最终产物。
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+
+# ── presentation ────────────────────────────────────────────────────────────
+
+# 本 agent 独有的工具呈现形态。该行等待 host 的 `codeRuntime`，而不是假定它存在：
+# 一个不组合任何 TypeScript 运行时的部署会在挂载时以本 id 失败，而不是在第一次请求时。
+#
+# `both` = standard 的原生逐个调用 + ptc 的 run_code 程序化编排，两者同时可见，
+# 四种预设的调用形态都不丢。代价是请求里 schema 几乎翻倍：
+# 想省 token 就改成 `ptc`（只保留 run_code + 生成的 SDK），
+# 想要最小的请求体则改成 `native`。
+# 合法值只有 native | ptc | both——原来的 `code` 不是合法值，会在挂载时被拒绝。
+- id: tool-presentation
+  name: '@deepseek-ai/dsh-agent-tool-presentation'
+  config:
+    mode: both
