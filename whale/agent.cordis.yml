@@ -25,6 +25,10 @@
 #   2. `tool-presentation` 行原来用 `mode: code`，合法值只有
 #      native | ptc | both → 配置校验直接拒绝。
 #   3. `tool-web` 原来写 `fetch: false`，等于关掉了 web_fetch。
+#   4. `workflow-worker-thread` 行原来指向 `@deepseek-ai/dsh-workflow-worker-thread`，
+#      该包已从部署中移除（profile 里只剩断掉的 junction），名册把它报成
+#      `row "workflow-worker-thread" names a plugin that cannot be resolved`，
+#      整份预设挂载失败。已换成 standard 同款 `@deepseek-ai/dsh-workflow-ptc`。
 # 补齐的能力：command-goal、present、web_fetch、常驻 PTY 栈（默认关）、
 # tool-cordis（默认关）、子代理的 modelSelectionSettings。
 
@@ -316,8 +320,12 @@
         backgroundMode: one-shot
         maxDepth: provider-managed
 
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    # 原来是 `@deepseek-ai/dsh-workflow-worker-thread`，该包已不在本部署的包集合里
+    # （repo 的 packages/workflow 只有 workflow / workflow-ptc / tool-workflow /
+    # tool-ralph），profile 里指向旧全局安装的 junction 也是断的，导致整份预设
+    # 无法解析。改用 standard 预设同款、且确实存在的 ptc provider。
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 

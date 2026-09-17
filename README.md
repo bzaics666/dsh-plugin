@@ -43,11 +43,34 @@ ${DSH_HOME}/.agent-presets/          # 本机即 C:\Users\admin\.dsh\.agent-pres
 
 ### 校验状态
 
-- 本预设是当前会话实际运行的组合（`agent-presets.default: whale`），会话里的工具目录与
-  `agent.cordis.yml` 的行一一对应，因此「可正常挂载」已由实机验证。
+- 2026-09-17 重新校验通过：名册 `broken` 为空，`standingKeyFor('whale')` 正常返回
+  （2026-09-16 首次入库时同样通过；之后随 DSH 换包出现过一次行级依赖失效，见「变更记录」）。
 - 改动后请**开一个新的白晶会话**确认工具清单：preset 决定工具 schema 与 prompt 段落，
-  只有真实会话才展示这份组合产出的 agent。`cordis_mount` / `cordis_inspect` 这类探针
-  只在创造模式预设下可用，白晶默认拿不到。
+  只有真实会话才展示这份组合产出的 agent。
+
+### 行级依赖与校验方式
+
+preset 里的每个 `name:` 都必须能在当前部署中解析到真实包 —— 由 profile 的 `node_modules`
+提供（本机解析根为 `C:\Users\admin\.dsh\profiles\node_modules`，Node 从 `profiles/web`
+逐级向上查找）。DSH 升级 / 换包之后，旧链接可能变成**断链 junction**：行还在、包已不在，
+`list()` 就会把整份预设标成 broken，挂载直接失败。
+
+两步校验，缺一不可（都在创造模式会话里做；白晶默认不带 `tool-cordis`）：
+
+| 步骤 | 方式 | 通过标准 |
+| --- | --- | --- |
+| 1. 解析检查 | 读 `ctx.agentPresets.list()` 中 `whale` 的 `broken` 字段 | `broken === undefined` |
+| 2. 真实挂载 | `await ctx.agentPresets.standingKeyFor('whale')` | 正常返回、不抛错 |
+
+第 1 步只覆盖「YAML 形状 + 每个 `name:` 能解析到包」；第 2 步按开会话的同一流程组合整棵
+插件子树，才能抓到包不存在、配置非法、行从未激活、服务被发布进 root realm 这四类失败。
+
+### 变更记录
+
+| 日期 | 改动 | 原因与方式 |
+| --- | --- | --- |
+| 2026-09-16 | 首次纳入版本管理 | 归档 `whale`（白晶），预设内容本身未改动；提交 `bec519f`。 |
+| 2026-09-17 | `delegation` 组：`workflow-worker-thread` 行 → `workflow-ptc` 行 | 名册报 `row "workflow-worker-thread" names a plugin that cannot be resolved: @deepseek-ai/dsh-workflow-worker-thread`，整份预设无法挂载。该包已不在部署的包集合里（`packages/workflow` 只剩 `workflow` / `workflow-ptc` / `tool-workflow` / `tool-ralph`），profile 中的 junction 指向已被删除的旧全局安装。改法：换成 `standard` 预设同款、解析正常的 `@deepseek-ai/dsh-workflow-ptc`（`provider: spawn` 与所在 `isolate.workflowEngine` realm 均不变），并用上表两步校验通过。 |
 
 ### 硬性禁忌
 
