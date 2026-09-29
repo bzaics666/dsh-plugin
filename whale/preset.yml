@@ -1,2 +1,2 @@
 name: 白晶
-description: 四个内置预设（标准 / PTC / 极简 / 创造）的去重并集 + 白晶 persona：原生与 run_code 双形态工具，goal/plan/压缩/委派/workflow/ralph/web 抓取/交付呈现全在；常驻 PTY 与自省自改工具随组合同行但默认关闭（互斥项，按注释一行开启）。
+description: "四个内置预设（标准 / PTC / 极简 / 创造）的去重并集 + 白晶 persona：原生与 run_code 双形态工具，goal/plan/压缩/委派/workflow/自省自改/web 抓取/交付呈现全在；常驻 PTY 与 ralph 默认关闭（PTY 与一次性 shell 同名互斥，按注释一行开启；ralph 对齐四个内置预设）。"

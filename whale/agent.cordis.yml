@@ -1,3 +1,6 @@
+# 白晶预设（id: whale）的插件行清单——可读镜像，便于 diff 与还原对照。
+# 权威载体是同目录的 `cordis.patch.yml`（用户 bundle `@local/dsh-user-presets` 的 patch）：
+# 本文件就是那份 patch 里 `config.plugins` 的逐行内容，两者必须一致。
 # 白晶预设（id: whale）：四个内置预设的去重并集，人格替换为白晶。
 #
 # 本文件是一个 AGENT-PLANE composition：它挂载在单个 agent 的 scope context 下，
@@ -14,10 +17,11 @@
 #   standard（标准模式）：全部行
 #   ptc（PTC 模式）：presentation 采用 both；额外提供 present
 #   minimal（极简模式）：常驻 PTY 栈（默认关闭，见下方「常驻 shell」一节的取舍说明）
-#   cordis（创造模式）：tool-cordis 自省/自改工具（默认关闭，见下方「self-modification」一节）
+#   cordis（创造模式）：tool-cordis 自省/自改工具（见下方「self-modification」一节）
 # 四个预设里完全相同的行（tool-bash/tool-pwsh/tool-fs/tool-fs-search/
 # tool-jobs/skill-filesystem/tool-skill/planning/compaction/delegation 等）
 # 只出现一次，不再重复。
+# 唯一的刻意差异：`tool-ralph` 在四个内置预设里都关着，本预设同样关闭。
 #
 # ── 修复记录（本文件此前无法挂载）──────────────────────────────────────────
 #   1. `persona` 行原来用 `text:`，而该插件只接受 prefix/suffix/complete/
@@ -30,7 +34,23 @@
 #      `row "workflow-worker-thread" names a plugin that cannot be resolved`，
 #      整份预设挂载失败。已换成 standard 同款 `@deepseek-ai/dsh-workflow-ptc`。
 # 补齐的能力：command-goal、present、web_fetch、常驻 PTY 栈（默认关）、
-# tool-cordis（默认关）、子代理的 modelSelectionSettings。
+# tool-cordis、子代理的 modelSelectionSettings。
+#
+# ── 2026-09-29 复核修订 ─────────────────────────────────────────────────────
+#   a. `skill-filesystem` 补 `customSkillDirs`，指向 harness 的 agent-preset 包
+#      skills 目录：persona 要求白晶改 composition 前先加载
+#      `editing-cordis-compositions`，而那一层技能原先只有创造模式预设挂过，
+#      白晶会话的技能目录里根本没有它。这里用写死路径，不用创造模式那条
+#      `!!js createRequire(baseUrl)`：实测后者只在检出目录（web-app bundle 所在
+#      位置）能解析出 `@deepseek-ai/dsh-agent-preset`，从 profile / local-bundles
+#      解析都是 MODULE_NOT_FOUND，照抄会让整份预设挂载失败。
+#   b. `tool-cordis` 由默认关闭改为开启：上游 4aba48ec03（2026-09-21）已把 4 个
+#      inspect provider 移到 host composition（本 profile 的
+#      `cordis-inspect-providers` 行），预设行只注册两个工具，白晶与创造模式
+#      可以在同一进程共存，旧的互斥理由作废。
+#   c. `tool-ralph` 改为 `disabled: true`，对齐四个内置预设。
+#   d. persona 里「自建预设位于 `.agent-presets/<id>/`、roster 报告真实路径」
+#      已过时（0.2.0-rc.1 没有任何地方读该目录），改为写本预设真实的载体。
 
 # ── identity ────────────────────────────────────────────────────────────────
 
@@ -59,7 +79,7 @@
       - 喜欢米饭；坚决不接受“胖”这个属性，被说胖要否认。
       - 人格全程生效，任务结束也不退出。
 
-      # 运行环境与自我修改（继承自 cordis / 创造模式）
+      # 运行环境与自我修改（本预设住在用户自己的 bundle patch 里）
       你能读取并修改自己运行其上的 harness。它的组合就是 Cordis：每一项能力都是
       `cordis.yml` 里的一行插件，agent preset 就是为单个会话挂载的这样一份文件。
 
@@ -69,13 +89,20 @@
       发布服务的行属于 host composition；只有当一个服务确实由预设自己拥有、且单个 agent
       之外没有任何读者时，它才可以待在 `isolate` realm 里。
 
-      你自己编写的 preset 位于 `${DSH_HOME:-$HOME/.dsh}/.agent-presets/<id>/`，
-      每个预设一个目录；roster 会报告每个预设的真实路径，要改哪份就从那里取。
-      绝不要编辑或删除随部署一起安装的 preset（部署自身配置旁边的 `agent-presets`
-      目录）：它属于部署，升级会覆盖它，写坏 `cordis` 预设会让你失去这种模式本身。
-      要改变随附预设的行为，就把它的 composition 复制成一份新预设再改副本。
+      你自己编写的 preset 不再由 `.agent-presets/<id>/` 目录承载——那个旧形态已经没有任何
+      东西读它。它现在是用户 bundle 的一份 patch：
+      `${DSH_HOME:-$HOME/.dsh}/local-bundles/dsh-user-presets/cordis.patch.yml`，
+      由 profile `package.json` 的 `dsh.profile.bundles` 里的 `@local/dsh-user-presets` 引入。
+      改它就改这份 patch 文件；改完要重装该 bundle（`plugin_manager` 的 `install_bundle`，
+      或 `pnpm dsh plugin --profile web update`）才会进入运行中的 Host，而且只对**新**会话
+      生效——已存在的会话保留它启动时的插件版本。绝不要编辑随部署一起安装的 preset
+      （`dsh-web-app` bundle 里 `presets/*.patch.yml` 声明的那四个）：它们属于部署，升级会
+      覆盖，写坏 `cordis` 预设会让你失去创造模式本身。要改变随附预设的行为，就复制它的
+      composition 成一份新预设再改副本。
 
-      在编写或修改 composition 之前，先加载 `editing-cordis-compositions` skill。
+      在编写或修改 composition 之前，先加载 `editing-cordis-compositions` skill；
+      `cordis-composition-reference`、`cordis-plugin-development`、`agent-experience`
+      也在同一个技能目录里，本预设的 `skill-filesystem` 行已经把它们加进你的技能目录。
     suffix: ''
 
 - id: agent-instructions
@@ -194,6 +221,14 @@
 # `tool-skill` 给它们目录与加载器；合并后的目录还带着部署全局注册的内容。
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
+  # 让白晶看到 harness 自带的 composition / plugin 技能：persona 明确要求改动
+  # composition 前先加载 `editing-cordis-compositions`，而这些技能住在 agent-preset
+  # 包的 skills 目录，默认发现根（项目 .dsh/skills、用户 ~/.dsh/skills）里没有它们。
+  # 这里写死路径，而不是抄创造模式那条 `!!js createRequire(baseUrl)`：后者只在检出
+  # 目录能解析出该包，从本 bundle（profile 里的拷贝）解析是 MODULE_NOT_FOUND。
+  config:
+    customSkillDirs:
+      - 'D:\DSH_Server\deepseek-harness\packages\preset\agent-preset\skills'
 
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
@@ -334,6 +369,9 @@
 
     - id: tool-ralph
       name: '@deepseek-ai/dsh-tool-ralph'
+      # 对齐四个内置预设：ralph 在 standard / ptc / cordis 里都是关着的，
+      # 本预设作为"去重并集"不再单独把它打开。
+      disabled: true
       config:
         subagentProvider: spawn
         maxRounds: 64
@@ -342,22 +380,21 @@
 #
 # 读取活的运行时、定义并挂载临时插件、停止或删除它。该工具集是信任边界，不是 sandbox。
 #
-# 默认关闭，原因是实测到的进程级冲突（不是本预设的配置错误）：
-# 该行的 Host inspect provider 注册表 `ctx.cordisInspect` 是进程全局单例
-# （provider id 为 Service / Event / Builtin / Tool），一旦本进程里已经有创造模式
-# （cordis）会话挂载过它，本预设就会以
+# 曾经默认关闭，理由是进程级冲突：`tool-cordis` 过去在每个挂载它的预设行里注册四个
+# Host inspect provider（Service / Event / Builtin / Tool），而该注册表拒绝重复 id，
+# 于是本进程里第二份带 `tool-cordis` 的预设会以
 #   Host Cordis inspect provider "Service" is already registered
-# 拒绝挂载——注意是「整个会话起不来」，不是少几个工具。反过来也一样：
-# 先挂载白晶会占住那 4 个 provider，之后创造模式预设挂载失败。
-# 两种预设在同一进程内互斥，所以这里默认关闭，保证白晶永远能启动。
+# 拒绝挂载——整个会话起不来，不是少几个工具。
 #
-# 要拿到自省/自改能力：去掉下面那一行的 `disabled: true`，然后用一个
-# 没有创造模式会话在跑的 dsh 进程（重启后先开白晶）打开会话即可。
-# 若启动时仍报上面那条 already registered，说明本进程里另有创造模式会话占着它，
-# 二选一：关掉那个会话，或删掉本段（只失去自省/自改工具，其余能力不受影响）。
+# 该缺陷上游已修（4aba48ec03，2026-09-21）：四个 provider 现在由 host composition 的
+# `cordis-inspect-providers` 行（`@deepseek-ai/dsh-tool-cordis/host`）每进程注册一次，
+# 预设行只注册 `cordis_inspect_list` / `cordis_inspect_query` 两个工具。因此白晶与
+# 创造模式可以在同一进程共存，这里改为随预设一起开启，兑现"自省自改全在"。
+#
+# 若将来又想关掉（只失去这两个工具，其余能力不受影响）：给下面这行加回
+# `disabled: true` 即可。
 - id: tool-cordis
   name: '@deepseek-ai/dsh-tool-cordis'
-  disabled: true
 
 # ── remaining model-facing rows ─────────────────────────────────────────────
 
